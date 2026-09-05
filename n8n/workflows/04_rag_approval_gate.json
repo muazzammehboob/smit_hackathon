@@ -1,0 +1,85 @@
+{
+  "name": "04_RAG_Policy_Human_Approval_Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rag-query"
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [ 250, 300 ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT fare_class FROM bookings WHERE pnr = '{{$json.body.pnr}}';"
+      },
+      "name": "Get Booking",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [ 450, 300 ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT content FROM match_policy_embeddings('[0]', '{{$json.fare_class}}', 3);"
+      },
+      "name": "Vector Search",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [ 650, 300 ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-3.5-turbo",
+        "prompt": "Draft customer response based on context"
+      },
+      "name": "OpenAI",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [ 850, 300 ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO support_draft_approvals (pnr, question, draft_response, status) VALUES ('{{$node[\"Webhook\"].json.body.pnr}}', '{{$node[\"Webhook\"].json.body.question}}', '{{$json.response}}', 'PENDING') RETURNING id;"
+      },
+      "name": "Save Draft",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [ 1050, 300 ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "system@example.com",
+        "toEmail": "ops@example.com",
+        "subject": "Approval Required",
+        "text": "Please approve: /api/v1/support/approve?id={{$json.id}}&action=approve"
+      },
+      "name": "Email Ops",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [ 1250, 300 ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [ [ { "node": "Get Booking", "type": "main", "index": 0 } ] ]
+    },
+    "Get Booking": {
+      "main": [ [ { "node": "Vector Search", "type": "main", "index": 0 } ] ]
+    },
+    "Vector Search": {
+      "main": [ [ { "node": "OpenAI", "type": "main", "index": 0 } ] ]
+    },
+    "OpenAI": {
+      "main": [ [ { "node": "Save Draft", "type": "main", "index": 0 } ] ]
+    },
+    "Save Draft": {
+      "main": [ [ { "node": "Email Ops", "type": "main", "index": 0 } ] ]
+    }
+  },
+  "active": true
+}

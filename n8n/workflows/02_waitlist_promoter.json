@@ -1,0 +1,77 @@
+{
+  "name": "02_Waitlist_Auto_Promoter",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 2
+            }
+          ]
+        }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [ 250, 300 ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT promote_waitlist(f.id) FROM flights f JOIN flight_classes fc ON f.id = fc.flight_id WHERE (fc.capacity - fc.booked_seats) > 0 AND EXISTS (SELECT 1 FROM waitlist WHERE flight_id = f.id AND status = 'WAITING') LIMIT 5;"
+      },
+      "name": "Promote Waitlist",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [ 450, 300 ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.promote_waitlist }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Passenger Returned?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [ 650, 300 ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notification_logs (message) VALUES ('Waitlist promoted')"
+      },
+      "name": "Log Notification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [ 850, 200 ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [ [ { "node": "Promote Waitlist", "type": "main", "index": 0 } ] ]
+    },
+    "Promote Waitlist": {
+      "main": [ [ { "node": "Passenger Returned?", "type": "main", "index": 0 } ] ]
+    },
+    "Passenger Returned?": {
+      "main": [ [ { "node": "Log Notification", "type": "main", "index": 0 } ] ]
+    }
+  },
+  "active": true
+}

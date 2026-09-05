@@ -1,0 +1,63 @@
+{
+  "name": "03_Fraud_Scanner",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [ 250, 300 ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ip_address, COUNT(*) as cnt FROM bookings WHERE created_at > NOW() - INTERVAL '10 minutes' AND status != 'SUSPECTED_FRAUD' GROUP BY ip_address HAVING COUNT(*) >= 5;"
+      },
+      "name": "Scan Bots",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [ 450, 300 ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE bookings SET status = 'SUSPECTED_FRAUD' WHERE ip_address = '{{$json.ip_address}}' AND created_at > NOW() - INTERVAL '10 minutes';"
+      },
+      "name": "Update Bookings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [ 650, 300 ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ops_escalations (reason, severity, details) VALUES ('BOT_BURST_DETECTED', 'HIGH', '{\"ip\": \"{{$json.ip_address}}\"}');"
+      },
+      "name": "Escalate",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [ 850, 300 ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [ [ { "node": "Scan Bots", "type": "main", "index": 0 } ] ]
+    },
+    "Scan Bots": {
+      "main": [ [ { "node": "Update Bookings", "type": "main", "index": 0 } ] ]
+    },
+    "Update Bookings": {
+      "main": [ [ { "node": "Escalate", "type": "main", "index": 0 } ] ]
+    }
+  },
+  "active": true
+}
