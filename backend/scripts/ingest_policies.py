@@ -12,73 +12,80 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import settings
 from app.services.embeddings import generate_embedding
 
-def chunk_text(text: str, chunk_size=1600, overlap=200):
-    """
-    Very basic character-based chunking that tries to roughly approximate
-    400 tokens (assuming ~4 chars per token).
-    """
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = min(start + chunk_size, len(text))
+def chunk_and_tag(content: str):
+    chunks = content.split('\n\n')
+    results = []
+    for chunk in chunks:
+        chunk = chunk.strip()
+        if not chunk: continue
         
-        # Adjust end to nearest double newline if possible
-        if end < len(text):
-            nearest_break = text.rfind("\n\n", start, end)
-            if nearest_break > start + overlap:
-                end = nearest_break + 2
-
-        chunks.append(text[start:end].strip())
-        start = end - overlap if end < len(text) else len(text)
-        
-    return [c for c in chunks if c]
+        # Check if this chunk contains multiple fare classes in bullet points (like change_policy)
+        if 'BASIC_ECONOMY' in chunk and 'FLEXIBLE' in chunk and 'PREMIUM_FIRST' in chunk:
+            lines = chunk.split('\n')
+            general_lines = []
+            for line in lines:
+                if 'BASIC_ECONOMY' in line:
+                    results.append((line, 'BASIC_ECONOMY'))
+                elif 'FLEXIBLE' in line:
+                    results.append((line, 'FLEXIBLE'))
+                elif 'PREMIUM_FIRST' in line:
+                    results.append((line, 'PREMIUM_FIRST'))
+                else:
+                    general_lines.append(line)
+            if general_lines:
+                results.append(('\n'.join(general_lines).strip(), None))
+        else:
+            # Determine fare class for the chunk
+            if 'BASIC_ECONOMY' in chunk:
+                results.append((chunk, 'BASIC_ECONOMY'))
+            elif 'FLEXIBLE' in chunk:
+                results.append((chunk, 'FLEXIBLE'))
+            elif 'PREMIUM_FIRST' in chunk:
+                results.append((chunk, 'PREMIUM_FIRST'))
+            else:
+                results.append((chunk, None))
+                
+    # Filter out empty chunks that might result from general_lines
+    return [(c, f) for c, f in results if c]
 
 async def process_file(filepath: str, supabase: Client):
     filename = os.path.basename(filepath)
     policy_type = filename.replace('.md', '')
     
-    with open(filepath, 'r') as f:
+    with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    # Heuristic: Find fare class mentions and assign chunks
-    # For a robust approach, we parse the sections by fare class
-    fare_classes = ['BASIC_ECONOMY', 'FLEXIBLE', 'PREMIUM_FIRST']
+    chunks_with_tags = chunk_and_tag(content)
     
-    # Split by fare class headers roughly
-    for fc in fare_classes:
-        if fc in content:
-            # We will just embed chunks and assign the fare class based on the section
-            # For this hackathon implementation, we'll embed the specific fare class section.
-            fc_index = content.find(fc)
-            if fc_index != -1:
-                # Find end of this section (next fare class or end of file)
-                next_fc_index = len(content)
-                for other_fc in fare_classes:
-                    if other_fc != fc:
-                        idx = content.find(other_fc, fc_index + 1)
-                        if idx != -1 and idx < next_fc_index:
-                            next_fc_index = idx
-                
-                section_text = content[max(0, fc_index - 50):next_fc_index].strip()
-                chunks = chunk_text(section_text)
-                
-                for chunk in chunks:
-                    embedding = await generate_embedding(chunk)
-                    data = {
-                        "content": chunk,
-                        "fare_class": fc,
-                        "policy_type": policy_type,
-                        "embedding": embedding,
-                        "metadata": {"source": filename}
-                    }
-                    supabase.table("policy_embeddings").insert(data).execute()
-                    print(f"Ingested chunk for {fc} in {policy_type}")
+    for chunk, fare_class in chunks_with_tags:
+        embedding = await generate_embedding(chunk)
+        data = {
+            "content": chunk,
+            "fare_class": fare_class,
+            "policy_type": policy_type,
+            "embedding": embedding,
+            "metadata": {"source": filename}
+        }
+        supabase.table("policy_embeddings").insert(data).execute()
+        print(f"Ingested chunk for {fare_class} in {policy_type}")
 
 async def main():
+    # Force reload of settings to ensure environment variables are present
     load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env'))
+    # Make sure we read GEMINI_API_KEY from environment if not present in settings initially
+    if not settings.GEMINI_API_KEY:
+        settings.GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+        
     supabase_url = settings.SUPABASE_URL
     supabase_key = settings.SUPABASE_SERVICE_ROLE_KEY
     supabase = create_client(supabase_url, supabase_key)
+    
+    # Optional: Clear existing embeddings to avoid duplicates on re-run
+    try:
+        supabase.table("policy_embeddings").delete().neq("content", "impossible_value").execute()
+        print("Cleared existing policy embeddings.")
+    except Exception as e:
+        print(f"Could not clear embeddings (might be empty or permission issue): {e}")
     
     policies_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'policies')
     files = glob.glob(f"{policies_dir}/*.md")

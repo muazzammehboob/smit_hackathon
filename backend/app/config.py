@@ -45,6 +45,7 @@ class Settings(BaseSettings):
 
     # AI and orchestration keys
     OPENAI_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173", "*"]
     N8N_WEBHOOK_SECRET: str = "hackathon-secret"
     PRICE_LOCK_SECRET: str = "price-lock-secret-key-12345"
