@@ -73,38 +73,22 @@ Question: {customer_question}"""
 
     async def call_gemini(model: str):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GEMINI_API_KEY}"
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=6.0) as client:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()
             data = resp.json()
             return data["candidates"][0]["content"]["parts"][0]["text"]
 
-    try:
-        return await call_gemini("gemini-2.0-flash")
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code in [400, 404]:
-            print(f"Gemini 2.0 Flash failed with {e.response.status_code}, falling back to 1.5-flash")
-            try:
-                return await call_gemini("gemini-1.5-flash")
-            except httpx.HTTPStatusError as e2:
-                if e2.response.status_code in [400, 404]:
-                    print(f"Gemini 1.5 Flash failed, falling back to gemini-3.6-flash (mock env support)")
-                    try:
-                        return await call_gemini("gemini-3.6-flash")
-                    except Exception as e3:
-                        print(f"Fallback Gemini 3.6 Flash also failed: {e3}")
-                        return "I apologize, but I could not generate a response at this time."
-                else:
-                    print(f"Fallback Gemini 1.5 Flash failed: {e2}")
-                    return "I apologize, but I could not generate a response at this time."
-            except Exception as e2:
-                print(f"Fallback Gemini 1.5 Flash also failed: {e2}")
-                return "I apologize, but I could not generate a response at this time."
-        print(f"Gemini generation failed: {e}")
-        return "I apologize, but I could not generate a response at this time."
-    except Exception as e:
-        print(f"Gemini generation failed: {e}")
-        return "I apologize, but I could not generate a response at this time."
+    candidate_models = ["gemini-3.6-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-2.0-flash"]
+    for model_name in candidate_models:
+        try:
+            res = await call_gemini(model_name)
+            if res:
+                return res.strip()
+        except Exception as e:
+            continue
+
+    return "I apologize, but AI generation is currently unavailable. Please contact our support team directly."
 
 async def match_policy_chunks(supabase, query_embedding: List[float], fare_class: str, limit: int = 3) -> List[str]:
     """
@@ -112,16 +96,21 @@ async def match_policy_chunks(supabase, query_embedding: List[float], fare_class
     Calls Supabase RPC to find similar vectors.
     """
     try:
-        response = supabase.rpc("match_policy_chunks", {
+        rpc_call = supabase.rpc("match_policy_embeddings", {
             "query_embedding": query_embedding,
-            "match_fare_class": fare_class,
+            "match_fare_class": fare_class.upper(),
             "match_limit": limit
         }).execute()
+        # Handle both async and sync supabase client executions
+        if hasattr(rpc_call, "__await__"):
+            response = await rpc_call
+        else:
+            response = rpc_call
         
         # The RPC function should handle `fare_class = :fare_class OR fare_class IS NULL` logic.
         # Assuming the response returns rows with a 'content' field.
-        if response.data:
-            return [row["content"] for row in response.data if "content" in row]
+        if response and hasattr(response, "data") and response.data:
+            return [row["content"] for row in response.data if isinstance(row, dict) and "content" in row]
         return []
     except Exception as e:
         print(f"Failed to match policy chunks: {e}")

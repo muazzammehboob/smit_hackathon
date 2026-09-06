@@ -1,187 +1,113 @@
-# 🚀 Flight Management System - 10-Minute Master Demo Script
-
-This script provides exactly what you need to impress the judges: live concurrency, auto-cascading logic, background workflows, and the RAG-powered support agent.
+# 🎤 3-Minute Master Hackathon Demo Script & Judge Walkthrough
+**Flight Management System (FMS)**  
+**Stack**: Next.js 14 + FastAPI + Supabase Postgres + n8n Cloud + Pinecone RAG  
 
 ---
 
-### Step 1: Admin Flight Creation
-*LHR->DXB with 100 seats, instant layout generation.*
+## ⏱ Quick Run Checklist Before Presenting
+1. **FastAPI Backend**:
+   ```bash
+   cd "e:\smit hackathon\project\backend"
+   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+   ```
+2. **Next.js Frontend**:
+   ```bash
+   cd "e:\smit hackathon\frontend"
+   npm run dev
+   ```
+   *Open: [http://localhost:3000](http://localhost:3000)*
 
+---
+
+## 🎙 Spoken Script: 3-Minute Judge Presentation
+
+### [0:00 - 0:45] The Problem & Dual-Writer Architecture
+> "Hello judges! Airline reservation systems face the classic distributed dual-writer problem: live passenger bookings demand sub-second ACID transactions, while scheduled automation and background agents need direct database access without corrupting inventory.
+> 
+> Our system solves this with **FastAPI** as the exclusive synchronous write-path for live bookings, **n8n Cloud** for asynchronous background sweeps, and **Supabase Postgres** with row-level locks (`FOR UPDATE SKIP LOCKED`) and database check invariants as the supreme single source of truth."
+
+---
+
+### [0:45 - 1:30] Journey 1 & 2: Live Search, 15-Min Price Lock & Atomic 10-Min Hold
+> "Let's demonstrate **Journey 1: Search & Price Lock**.
+> On the passenger portal, we search **LHR to DXB**.
+> Notice two critical things:
+> 1. Real-time class seat counts are computed directly from `capacity - (booked + active_holds)`.
+> 2. We generate an HMAC-SHA256 **Price Lock Token** that seals the fare for **15 minutes**.
+>
+> Now, **Journey 2: Atomic Checkout**.
+> Clicking 'Select Seat' loads the physical seat layout. When I select seat **14A** and click **Hold Seat**, FastAPI acquires an atomic row lock and establishes a **10-minute hold timer** powered by a TTL sweep worker.
+> I enter my details, click **Confirm Booking**, and within milliseconds, FastAPI validates the price lock signature, confirms the booking via database RPC, persists an idempotent transaction ledger, and returns our confirmed **PNR reference**."
+
+---
+
+### [1:30 - 2:15] Journey 3: Tiered Refund Policy & Standby Waitlist
+> "Next, **Journey 3: Policy Branching & Cancellations**.
+> Let's go to **Manage Booking** and lookup our PNR.
+> When a passenger cancels:
+> - **Basic Economy** strictly issues **\$0 refund**.
+> - **Flexible** grants a **90% refund** or **100% travel credit voucher**.
+> - **Premium First** gives a **100% instant refund**.
+> 
+> Let's click 'Cancel for Refund'—the backend releases the held seat back to the inventory, recalculates the refund, and if the flight was full, our **n8n waitlist auto-promotion worker** immediately promotes the next passenger using `SELECT ... FOR UPDATE SKIP LOCKED`!"
+
+---
+
+### [2:15 - 3:00] Journey 4: Ops Admin & Grounded AI Support (RAG)
+> "Finally, **Journey 4: Ops Admin & AI Support Gate**.
+> In the **Admin Portal**:
+> 1. **Mathematical Invariant Gate**: Creating a 100-passenger flight enforces `First (20) + Business (30) + Economy (50) == Total (100)`. Any invalid sum is rejected with HTTP 422.
+> 2. **Cascading Schedule Shift**: A delay over 180 minutes automatically flags all passenger tickets for free rebooking.
+> 3. **AI Support with Human-in-the-Loop**: When a customer asks: *'Can I cancel and get my money back?'*, our Gemini RAG pipeline vector-searches our airline policy embeddings in Pinecone, grounds the answer against the passenger's exact ticket fare class, and queues a draft response for Ops Agent approval before sending.
+>
+> Thank you! All 10 domains and 56 specifications are live, verified, and ready for Q&A."
+
+---
+
+## 🛠 Direct curl Commands for Deep-Dive Judge Verification
+
+### 1. Invariant Validation (Admin Flight Creation)
 ```bash
 curl -X POST "http://localhost:8000/api/v1/admin/flights" \
-     -H "Content-Type: application/json" \
-     -H "Authorization: Bearer ADMIN_TOKEN" \
-     -d '{
-           "flight_number": "EK-001",
-           "departure_airport": "LHR",
-           "arrival_airport": "DXB",
-           "departure_time": "2026-10-01T10:00:00Z",
-           "arrival_time": "2026-10-01T20:00:00Z",
-           "total_seats": 100,
-           "base_price": 500
-         }'
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Role: SUPER_ADMIN" \
+  -d '{
+    "flight_number": "AL888",
+    "origin_airport": "LHR",
+    "destination_airport": "DXB",
+    "departure_time": "2026-10-15T08:00:00Z",
+    "arrival_time": "2026-10-15T18:00:00Z",
+    "total_capacity": 100,
+    "first_class_seats": 20,
+    "business_class_seats": 30,
+    "economy_class_seats": 50,
+    "origin_tz": "UTC"
+  }'
 ```
 
----
-
-### Step 2: Live Flight Search
-*Shows real-time available seats and 15-min HMAC price lock token.*
-
+### 2. Live Search with HMAC Price Lock
 ```bash
-curl -X GET "http://localhost:8000/api/v1/search/flights?origin=LHR&destination=DXB&date=2026-10-01" \
-     -H "Accept: application/json"
-```
-*Note the `price_lock_token` from the response for the next steps.*
-
----
-
-### Step 3: Atomic Seat Hold
-*Locks seat row in DB, sets hold TTL.*
-
-```bash
-curl -X POST "http://localhost:8000/api/v1/bookings" \
-     -H "Content-Type: application/json" \
-     -H "Idempotency-Key: HOLD-KEY-001" \
-     -d '{
-           "flight_id": "<FLIGHT_ID_FROM_STEP_1>",
-           "passenger_name": "Alice Hold",
-           "passenger_email": "alice@example.com",
-           "seat_id": "<SEAT_ID>",
-           "fare_class": "FLEXIBLE",
-           "price_lock_token": "<TOKEN_FROM_STEP_2>"
-         }'
+curl -X GET "http://localhost:8000/api/v1/flights/search?origin=LHR&destination=DXB&date=2026-10-15"
 ```
 
----
-
-### Step 4: Concurrency & Overselling Prevention Test
-*Dual simultaneous curl commands on last seat: one returns 201, other returns 409 Conflict.*
-
-**Terminal 1:**
+### 3. Idempotent Booking Confirmation
 ```bash
-curl -X POST "http://localhost:8000/api/v1/bookings" \
-     -H "Content-Type: application/json" \
-     -H "Idempotency-Key: TERM-1-KEY-001" \
-     -d '{
-           "flight_id": "<FLIGHT_ID_FROM_STEP_1>",
-           "passenger_name": "Alice Concurrent",
-           "passenger_email": "alice@example.com",
-           "seat_id": "<SEAT_ID>",
-           "fare_class": "FLEXIBLE",
-           "price_lock_token": "<TOKEN_FROM_STEP_2>"
-         }'
+curl -X POST "http://localhost:8000/api/v1/bookings/confirm" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: DEMO-IDEMP-001" \
+  -d '{
+    "hold_id": "<HOLD_ID>",
+    "passenger_name": "Jane Doe",
+    "passenger_email": "jane@example.com",
+    "fare_class": "FLEXIBLE",
+    "fare_cents": 85000,
+    "price_lock_token": "<TOKEN>"
+  }'
 ```
 
-**Terminal 2:**
+### 4. Background Automations & Webhooks
 ```bash
-curl -X POST "http://localhost:8000/api/v1/bookings" \
-     -H "Content-Type: application/json" \
-     -H "Idempotency-Key: TERM-2-KEY-002" \
-     -d '{
-           "flight_id": "<FLIGHT_ID_FROM_STEP_1>",
-           "passenger_name": "Bob Concurrent",
-           "passenger_email": "bob@example.com",
-           "seat_id": "<SEAT_ID>",
-           "fare_class": "FLEXIBLE",
-           "price_lock_token": "<TOKEN_FROM_STEP_2>"
-         }'
-```
-
----
-
-### Step 5: Idempotency Protection
-*Resend same booking request with same Idempotency-Key: returns cached confirmation with 0 duplicate charge.*
-
-```bash
-curl -X POST "http://localhost:8000/api/v1/bookings" \
-     -H "Content-Type: application/json" \
-     -H "Idempotency-Key: TERM-1-KEY-001" \
-     -d '{
-           "flight_id": "<FLIGHT_ID_FROM_STEP_1>",
-           "passenger_name": "Alice Concurrent",
-           "passenger_email": "alice@example.com",
-           "seat_id": "<SEAT_ID>",
-           "fare_class": "FLEXIBLE",
-           "price_lock_token": "<TOKEN_FROM_STEP_2>"
-         }'
-```
-
----
-
-### Step 6: Fare-Branching Cancellations
-*Cancel Basic Economy -> $0 refund; Cancel Flexible -> 90% refund.*
-
-**Cancel Basic Economy (Expect $0 refund):**
-```bash
-curl -X POST "http://localhost:8000/api/v1/bookings/<BASIC_PNR>/cancel" \
-     -H "Content-Type: application/json"
-```
-
-**Cancel Flexible (Expect 90% refund):**
-```bash
-curl -X POST "http://localhost:8000/api/v1/bookings/<ALICE_PNR>/cancel" \
-     -H "Content-Type: application/json"
-```
-
----
-
-### Step 7: Waitlist Auto-Promotion
-*Freed seat triggers promotion via SKIP LOCKED, sends alert.*
-
-```bash
-# Add a user to the waitlist
-curl -X POST "http://localhost:8000/api/v1/waitlist" \
-     -H "Content-Type: application/json" \
-     -d '{
-           "flight_id": "<FLIGHT_ID_FROM_STEP_1>",
-           "passenger_name": "Charlie Waitlist",
-           "passenger_email": "charlie@example.com",
-           "priority_tier": "GOLD"
-         }'
-
-# Trigger n8n background workflow endpoint
+curl -X POST "http://localhost:8000/api/v1/webhooks/trigger-hold-sweep"
 curl -X POST "http://localhost:8000/api/v1/webhooks/trigger-waitlist-promotion"
-```
-
----
-
-### Step 8: Bot & Burst Fraud Detection
-*Simulate 5 quick bookings from 1 IP -> flags SUSPECTED_FRAUD.*
-
-```bash
-# Trigger the fraud scanner workflow webhook
 curl -X POST "http://localhost:8000/api/v1/webhooks/trigger-fraud-scan"
-```
-
----
-
-### Step 9: Grounded RAG Support with Human Gate
-*Customer asks policy question -> AI retrieves chunks -> Drafts response -> Admin clicks Approve -> Email dispatched.*
-
-```bash
-# 1. Submit Inquiry
-curl -X POST "http://localhost:8000/api/v1/support/inquire" \
-     -H "Content-Type: application/json" \
-     -d '{
-           "pnr": "<ALICE_PNR>",
-           "question": "Can I get a refund on my ticket?"
-         }'
-
-# 2. Ops Agent Approves
-curl -X POST "http://localhost:8000/api/v1/support/approve" \
-     -H "Content-Type: application/json" \
-     -d '{
-           "id": "<DRAFT_ID>",
-           "action": "approve"
-         }'
-```
-
----
-
-### Step 10: Immutable Audit Log
-*Shows audit trail entries with JSON diffs and admin ID.*
-
-```bash
-curl -X GET "http://localhost:8000/api/v1/admin/audit-logs" \
-     -H "Authorization: Bearer ADMIN_TOKEN"
 ```

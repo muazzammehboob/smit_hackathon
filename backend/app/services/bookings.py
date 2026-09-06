@@ -457,7 +457,7 @@ async def get_booking_by_pnr(supabase: Any, pnr: str) -> dict[str, Any]:
     try:
         response = (
             await supabase.table("bookings")
-            .select("*, flights(*), flight_seats(seat_number, seat_class), passengers(*)")
+            .select("*, flights(*), flight_seats!bookings_seat_id_fkey(seat_number, seat_class)")
             .eq("pnr", clean_pnr)
             .maybe_single()
             .execute()
