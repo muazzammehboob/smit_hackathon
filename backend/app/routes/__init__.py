@@ -6,6 +6,7 @@ from app.routes.search import router as search_router
 from app.routes.bookings import router as bookings_router
 from app.routes.waitlist import router as waitlist_router
 from app.routes.webhooks import router as webhooks_router
+from app.routes.auth import router as auth_router
 
 __all__ = [
     "health_router",
@@ -14,4 +15,6 @@ __all__ = [
     "bookings_router",
     "waitlist_router",
     "webhooks_router",
+    "auth_router",
 ]
+

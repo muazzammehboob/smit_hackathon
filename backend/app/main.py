@@ -13,6 +13,7 @@ from app.config import settings
 from app.dependencies import close_supabase_client, get_supabase_client
 from app.routes import (
     admin_router,
+    auth_router,
     bookings_router,
     health_router,
     search_router,
@@ -140,8 +141,10 @@ app.include_router(health_router)
 
 # Feature routers included under /api/v1
 app.include_router(health_router, prefix="/api/v1")
+app.include_router(auth_router)
 app.include_router(admin_router, prefix="/api/v1")
 app.include_router(search_router, prefix="/api/v1")
 app.include_router(bookings_router, prefix="/api/v1")
 app.include_router(waitlist_router, prefix="/api/v1")
 app.include_router(webhooks_router, prefix="/api/v1")
+

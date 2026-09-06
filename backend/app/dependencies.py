@@ -69,7 +69,26 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Support testing tokens for isolated unit and integration test environments
+    # 1. Verify Aloft HMAC-SHA256 JWT Token
+    try:
+        from app.routes.auth import verify_jwt_token
+        jwt_payload = verify_jwt_token(token)
+        if jwt_payload:
+            role = jwt_payload.get("role", "PASSENGER")
+            is_admin = bool(jwt_payload.get("is_admin") or role in {"SUPER_ADMIN", "OPS_AGENT", "ADMIN"})
+            return {
+                "id": jwt_payload.get("sub", "00000000-0000-0000-0000-000000000000"),
+                "email": jwt_payload.get("email", ""),
+                "role": role,
+                "name": jwt_payload.get("name", ""),
+                "is_admin": is_admin,
+                "app_metadata": {"role": role},
+                "user_metadata": {"role": role, "name": jwt_payload.get("name", "")},
+            }
+    except Exception as jwt_err:
+        pass
+
+    # 2. Support testing tokens for isolated unit and integration test environments
     if token in {"test-token", "dev-admin-token"}:
         is_admin_token = token == "dev-admin-token"
         role_name = "SUPER_ADMIN" if is_admin_token else "authenticated"
