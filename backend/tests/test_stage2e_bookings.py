@@ -305,3 +305,26 @@ def test_post_confirm_endpoint_201() -> None:
     assert body["flight_number"] == "PK-701"
     assert body["seat_number"] == "1A"
     assert body["status"] == "CONFIRMED"
+
+
+def test_write_endpoints_require_idempotency_key() -> None:
+    client = TestClient(app)
+    pnr = "TEST01"
+
+    # 1. POST /{pnr}/cancel requires Idempotency-Key
+    res_cancel_no_key = client.post(f"/api/v1/bookings/{pnr}/cancel")
+    assert res_cancel_no_key.status_code == 400
+    assert "Idempotency-Key" in res_cancel_no_key.json()["detail"]
+
+    # 2. POST /{pnr}/cancel-passenger requires Idempotency-Key
+    res_part_no_key = client.post(
+        f"/api/v1/bookings/{pnr}/cancel-passenger",
+        json={"passenger_ids": [str(uuid4())]},
+    )
+    assert res_part_no_key.status_code == 400
+    assert "Idempotency-Key" in res_part_no_key.json()["detail"]
+
+    # 3. POST /{pnr}/travel-credit requires Idempotency-Key
+    res_tc_no_key = client.post(f"/api/v1/bookings/{pnr}/travel-credit")
+    assert res_tc_no_key.status_code == 400
+    assert "Idempotency-Key" in res_tc_no_key.json()["detail"]

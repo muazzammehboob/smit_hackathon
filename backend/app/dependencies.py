@@ -39,19 +39,23 @@ async def get_current_user(
     x_admin_role: Annotated[Optional[str], Header(alias="X-Admin-Role")] = None,
 ) -> dict[str, Any]:
     """Validate Bearer token via Supabase auth, with fast demo bypass for admin headers."""
-    # Fast bypass for hackathon demo if admin header is present
-    if x_admin_role and x_admin_role.strip().upper() in {"SUPER_ADMIN", "OPS_AGENT"}:
-        role = x_admin_role.strip().upper()
-        return {
-            "id": "00000000-0000-0000-0000-000000000000",
-            "email": f"{role.lower()}@demo.local",
-            "role": role,
-            "is_admin": True,
-            "app_metadata": {"role": role},
-            "user_metadata": {"role": role},
-        }
+    is_dev_or_test = getattr(settings, "ENVIRONMENT", "development").lower() in {
+        "development", "dev", "test", "testing", "local"
+    }
 
     if not authorization:
+        # Fast bypass for hackathon demo if admin header is present (dev/test mode only)
+        if is_dev_or_test and x_admin_role and x_admin_role.strip().upper() in {"SUPER_ADMIN", "OPS_AGENT"}:
+            role = x_admin_role.strip().upper()
+            return {
+                "id": "00000000-0000-0000-0000-000000000000",
+                "email": f"{role.lower()}@demo.local",
+                "role": role,
+                "is_admin": True,
+                "app_metadata": {"role": role},
+                "user_metadata": {"role": role},
+            }
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required: missing Bearer token",
@@ -86,6 +90,27 @@ async def get_current_user(
                 "user_metadata": {"role": role, "name": jwt_payload.get("name", "")},
             }
     except Exception as jwt_err:
+        pass
+
+    # 1b. Verify standard PyJWT Token
+    try:
+        import jwt
+        jwt_secret = getattr(settings, "JWT_SECRET_KEY", getattr(settings, "PRICE_LOCK_SECRET", "aloft-secure-auth-token-secret-key-42"))
+        jwt_alg = getattr(settings, "JWT_ALGORITHM", "HS256")
+        jwt_payload = jwt.decode(token, jwt_secret, algorithms=[jwt_alg])
+        if jwt_payload:
+            role = jwt_payload.get("role", "PASSENGER")
+            is_admin = bool(jwt_payload.get("is_admin") or role in {"SUPER_ADMIN", "OPS_AGENT", "ADMIN"})
+            return {
+                "id": jwt_payload.get("sub", "00000000-0000-0000-0000-000000000000"),
+                "email": jwt_payload.get("email", ""),
+                "role": role,
+                "name": jwt_payload.get("name", ""),
+                "is_admin": is_admin,
+                "app_metadata": {"role": role},
+                "user_metadata": {"role": role, "name": jwt_payload.get("name", "")},
+            }
+    except Exception:
         pass
 
     # 2. Support testing tokens for isolated unit and integration test environments
@@ -147,9 +172,26 @@ async def verify_admin_role(
     user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Allows bypass if x_admin_role in ['SUPER_ADMIN', 'OPS_AGENT'] or if user's app_metadata.role matches."""
-    if x_admin_role and x_admin_role.strip().upper() in {"SUPER_ADMIN", "OPS_AGENT"}:
-        if isinstance(user, dict):
+    # 1. If an authenticated user dict is present, verify their role
+    if isinstance(user, dict):
+        app_metadata = user.get("app_metadata") or {}
+        user_role = str(app_metadata.get("role") or user.get("role") or "").upper()
+        if user_role in {"SUPER_ADMIN", "OPS_AGENT", "ADMIN", "SERVICE_ROLE"}:
             return user
+
+        if user.get("is_admin"):
+            return user
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrative privileges required to access this resource",
+        )
+
+    # 2. Fallback to X-Admin-Role header ONLY in test/dev mode when no authenticated user
+    is_dev_or_test = getattr(settings, "ENVIRONMENT", "development").lower() in {
+        "development", "dev", "test", "testing", "local"
+    }
+    if is_dev_or_test and x_admin_role and x_admin_role.strip().upper() in {"SUPER_ADMIN", "OPS_AGENT"}:
         role = x_admin_role.strip().upper()
         return {
             "id": "00000000-0000-0000-0000-000000000000",
@@ -160,23 +202,9 @@ async def verify_admin_role(
             "user_metadata": {"role": role},
         }
 
-    if not isinstance(user, dict):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-        )
-
-    app_metadata = user.get("app_metadata") or {}
-    user_role = str(app_metadata.get("role") or user.get("role") or "").upper()
-    if user_role in {"SUPER_ADMIN", "OPS_AGENT", "ADMIN", "SERVICE_ROLE"}:
-        return user
-
-    if user.get("is_admin"):
-        return user
-
     raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Administrative privileges required to access this resource",
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required",
     )
 
 

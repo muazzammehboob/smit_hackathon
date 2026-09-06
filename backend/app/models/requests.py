@@ -54,9 +54,9 @@ class FlightCreateRequest(BaseRequest):
     departure_time: datetime
     arrival_time: datetime
     total_capacity: int = Field(..., gt=0)
-    first_class_seats: int = Field(default=0, ge=0)
-    business_class_seats: int = Field(default=0, ge=0)
-    economy_class_seats: int = Field(default=0, ge=0)
+    first_class_seats: int = Field(..., gt=0)
+    business_class_seats: int = Field(..., gt=0)
+    economy_class_seats: int = Field(..., gt=0)
     origin_tz: str = Field(default="UTC", min_length=1, max_length=50)
 
     @field_validator("flight_number", "origin_airport", "destination_airport", mode="before")
@@ -189,7 +189,7 @@ class CancellationRequest(BaseRequest):
 class WaitlistJoinRequest(BaseRequest):
     """Payload for entering the priority standby waitlist on a full flight."""
 
-    flight_id: UUID
+    flight_id: Optional[UUID] = None
     requested_class: SeatClassEnum
     passenger_name: str = Field(..., min_length=2, max_length=150)
     passenger_email: EmailStr
@@ -200,7 +200,7 @@ class FlightCapacityUpdateRequest(BaseRequest):
     """Payload for administrative adjustment of class seat quotas."""
 
     total_capacity: Optional[int] = Field(default=None, gt=0)
-    first_class_seats: Optional[int] = Field(default=None, ge=0)
-    business_class_seats: Optional[int] = Field(default=None, ge=0)
-    economy_class_seats: Optional[int] = Field(default=None, ge=0)
+    first_class_seats: Optional[int] = Field(default=None, gt=0)
+    business_class_seats: Optional[int] = Field(default=None, gt=0)
+    economy_class_seats: Optional[int] = Field(default=None, gt=0)
 

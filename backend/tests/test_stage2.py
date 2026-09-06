@@ -33,7 +33,9 @@ from app.models.responses import (
     FlightResponse,
     FlightSearchResult,
     HoldResponse,
+    PartialCancellationResponse,
     SeatAvailability,
+    TravelCreditResponse,
     WaitlistResponse,
 )
 
@@ -220,6 +222,46 @@ def test_flight_create_request_invariants() -> None:
             first_class_seats=10,
             business_class_seats=20,
             economy_class_seats=50,  # sum is 80 != 100
+        )
+
+    # Invariant: Class capacities must be strictly greater than zero (gt=0)
+    with pytest.raises(ValueError):
+        FlightCreateRequest(
+            flight_number="PK-301",
+            origin_airport="LHR",
+            destination_airport="DXB",
+            departure_time=datetime(2026, 9, 10, 10, 0, tzinfo=timezone.utc),
+            arrival_time=datetime(2026, 9, 10, 18, 0, tzinfo=timezone.utc),
+            total_capacity=100,
+            first_class_seats=0,
+            business_class_seats=30,
+            economy_class_seats=70,
+        )
+
+    with pytest.raises(ValueError):
+        FlightCreateRequest(
+            flight_number="PK-301",
+            origin_airport="LHR",
+            destination_airport="DXB",
+            departure_time=datetime(2026, 9, 10, 10, 0, tzinfo=timezone.utc),
+            arrival_time=datetime(2026, 9, 10, 18, 0, tzinfo=timezone.utc),
+            total_capacity=100,
+            first_class_seats=10,
+            business_class_seats=0,
+            economy_class_seats=90,
+        )
+
+    with pytest.raises(ValueError):
+        FlightCreateRequest(
+            flight_number="PK-301",
+            origin_airport="LHR",
+            destination_airport="DXB",
+            departure_time=datetime(2026, 9, 10, 10, 0, tzinfo=timezone.utc),
+            arrival_time=datetime(2026, 9, 10, 18, 0, tzinfo=timezone.utc),
+            total_capacity=100,
+            first_class_seats=10,
+            business_class_seats=20,
+            economy_class_seats=0,
         )
 
 
@@ -433,3 +475,31 @@ def test_response_models_serialization() -> None:
         created_at=now,
     )
     assert flight_res.flight_number == "PK-301"
+
+    # 8. PartialCancellationResponse
+    partial_cancel = PartialCancellationResponse(
+        status="CANCELLED",
+        original_pnr="ORIG01",
+        child_pnr="CHLD01",
+        cancelled_passengers=["pax-1", "pax-2"],
+        refund_amount_cents=12000,
+        refund_type="CASH",
+        remaining_passengers=2,
+    )
+    assert partial_cancel.status == "CANCELLED"
+    assert partial_cancel.original_pnr == "ORIG01"
+    assert partial_cancel.refund_amount_cents == 12000
+
+    # 9. TravelCreditResponse
+    credit_res = TravelCreditResponse(
+        status="ACTIVE",
+        credit_code="TC-ABC12345",
+        amount_cents=15000,
+        balance_cents=15000,
+        expires_at=now,
+        pnr="PKR123",
+    )
+    assert credit_res.status == "ACTIVE"
+    assert credit_res.credit_code == "TC-ABC12345"
+    assert credit_res.voucher_code == "TC-ABC12345"
+    assert credit_res.balance_cents == 15000

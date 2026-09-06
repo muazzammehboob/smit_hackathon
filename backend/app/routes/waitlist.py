@@ -5,6 +5,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.routing import APIRoute
 from supabase import AsyncClient
 
 from app.dependencies import get_supabase_client
@@ -72,6 +73,11 @@ async def join_waitlist(
     supabase: AsyncClient = Depends(get_supabase_client),
 ) -> WaitlistResponse:
     """Enter priority standby waitlist when requested flight class has 0 available seats."""
+    if not payload.flight_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="flight_id is required",
+        )
     data = await join_waitlist_service(supabase=supabase, payload=payload)
     return WaitlistResponse(**data)
 
@@ -134,3 +140,96 @@ async def claim_waitlist_seat(
         waitlist_id=waitlist_id,
         client_ip=client_ip,
     )
+
+
+# ==============================================================================
+# API Contract Compliant Routes: /flights/{flight_id}/waitlist/...
+# ==============================================================================
+async def join_flight_waitlist(
+    flight_id: UUID,
+    payload: WaitlistJoinRequest,
+    supabase: AsyncClient = Depends(get_supabase_client),
+) -> WaitlistResponse:
+    """Register for priority standby waitlist for a specific flight."""
+    payload.flight_id = flight_id
+    data = await join_waitlist_service(supabase=supabase, payload=payload)
+    return WaitlistResponse(**data)
+
+
+async def get_flight_waitlist_position(
+    flight_id: UUID,
+    email: Optional[str] = Query(None, description="Passenger contact email"),
+    passenger_email: Optional[str] = Query(None, description="Passenger contact email alias", include_in_schema=False),
+    supabase: AsyncClient = Depends(get_supabase_client),
+) -> WaitlistResponse:
+    """Check current waitlist queue position for a waiting passenger on a flight."""
+    target_email = email or passenger_email
+    if not target_email:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="email query parameter is required",
+        )
+    data = await get_waitlist_position_service(
+        supabase=supabase,
+        flight_id=str(flight_id),
+        email=target_email,
+    )
+    return WaitlistResponse(**data)
+
+
+async def leave_flight_waitlist(
+    flight_id: UUID,
+    waitlist_id: str,
+    supabase: AsyncClient = Depends(get_supabase_client),
+) -> dict[str, Any]:
+    """Remove passenger standby entry from active waitlist for a flight."""
+    return await leave_waitlist_service(
+        supabase=supabase,
+        waitlist_id=waitlist_id,
+    )
+
+
+router.routes.append(
+    APIRoute(
+        "/flights/{flight_id}/waitlist",
+        join_flight_waitlist,
+        methods=["POST"],
+        response_model=WaitlistResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["Waitlist"],
+        summary="Register for priority standby waitlist on a full flight",
+    )
+)
+router.routes.append(
+    APIRoute(
+        "/flights/{flight_id}/waitlist/",
+        join_flight_waitlist,
+        methods=["POST"],
+        response_model=WaitlistResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["Waitlist"],
+        include_in_schema=False,
+    )
+)
+router.routes.append(
+    APIRoute(
+        "/flights/{flight_id}/waitlist/position",
+        get_flight_waitlist_position,
+        methods=["GET"],
+        response_model=WaitlistResponse,
+        status_code=status.HTTP_200_OK,
+        tags=["Waitlist"],
+        summary="Lookup active waitlist position and priority score",
+    )
+)
+router.routes.append(
+    APIRoute(
+        "/flights/{flight_id}/waitlist/{waitlist_id}",
+        leave_flight_waitlist,
+        methods=["DELETE"],
+        status_code=status.HTTP_200_OK,
+        tags=["Waitlist"],
+        summary="Forfeit waitlist position and leave standby queue",
+    )
+)
+

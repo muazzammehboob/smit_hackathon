@@ -7,7 +7,11 @@ from fastapi import APIRouter, Depends, status, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from supabase import AsyncClient
 from app.dependencies import get_supabase_client, verify_admin_role
-from app.models.requests import FlightCreateRequest, SeatMapCreateRequest
+from app.models.requests import (
+    FlightCreateRequest,
+    FlightScheduleUpdateRequest,
+    SeatMapCreateRequest,
+)
 from app.services.flights import (
     adjust_capacity_service,
     create_flight_service,
@@ -35,7 +39,7 @@ class CapacityAdjustPayload(BaseModel):
         description="Cabin seating class (FIRST, BUSINESS, ECONOMY)",
     )
     new_capacity: int = Field(
-        ..., ge=0, description="Target seat capacity for the specified class"
+        ..., gt=0, description="Target seat capacity for the specified class"
     )
 
     @field_validator("seat_class", mode="before")
@@ -134,15 +138,11 @@ async def create_seat_map(
     supabase: AsyncClient = Depends(get_supabase_client),
 ) -> dict[str, Any]:
     """Assign physical seat coordinates to flight classes."""
+    payload.flight_id = id
     admin_id = admin_user.get("id") or "system"
     return await create_seat_map_service(
         supabase=supabase, payload=payload, admin_id=admin_id
     )
-
-
-class FlightScheduleUpdateRequest(BaseModel):
-    departure_time: datetime
-    arrival_time: datetime
 
 
 @router.patch(
@@ -155,6 +155,7 @@ async def update_flight_schedule(
     id: UUID,
     payload: FlightScheduleUpdateRequest,
     request: Request,
+    admin_user: dict[str, Any] = Depends(verify_admin_role),
     supabase: AsyncClient = Depends(get_supabase_client),
 ) -> dict[str, Any]:
     # Fetches current flight from flights table
@@ -188,7 +189,7 @@ async def update_flight_schedule(
     if schedule_disrupted:
         await supabase.table("bookings").update({"schedule_disrupted": True}).eq("flight_id", str(id)).eq("status", "CONFIRMED").execute()
     
-    admin_id = "system" # we might extract from JWT or token if present, but since RBAC just checks header
+    admin_id = admin_user.get("id") or admin_user.get("email", "system")
     
     await log_admin_action(
         supabase=supabase,
@@ -216,6 +217,7 @@ async def update_flight_schedule(
 async def cancel_flight(
     id: UUID,
     request: Request,
+    admin_user: dict[str, Any] = Depends(verify_admin_role),
     supabase: AsyncClient = Depends(get_supabase_client),
 ) -> dict[str, Any]:
     flight_res = await supabase.table("flights").select("*").eq("id", str(id)).execute()
@@ -224,25 +226,25 @@ async def cancel_flight(
     flight = flight_res.data[0]
     
     await supabase.table("flights").update({"status": "CANCELLED"}).eq("id", str(id)).execute()
-    await supabase.table("seat_holds").update({"status": "EXPIRED"}).eq("flight_id", str(id)).in_("status", ["ACTIVE"]).execute()
+    await supabase.table("seat_holds").update({"status": "EXPIRED"}).eq("flight_id", str(id)).in_("status", ["HELD"]).execute()
     
     waitlist_res = await supabase.table("waitlist").update({"status": "CANCELLED"}).eq("flight_id", str(id)).eq("status", "WAITING").execute()
     cancelled_waitlist_count = len(waitlist_res.data) if waitlist_res.data else 0
     
     bookings_res = await supabase.table("bookings").update({
-        "status": "CANCELLED_BY_AIRLINE",
+        "status": "CANCELLED",
         "schedule_disrupted": True
     }).eq("flight_id", str(id)).eq("status", "CONFIRMED").execute()
     disrupted_bookings_count = len(bookings_res.data) if bookings_res.data else 0
     
-    await supabase.table("seats").update({
+    await supabase.table("flight_seats").update({
         "status": "AVAILABLE",
         "booking_id": None
     }).eq("flight_id", str(id)).execute()
     
     await supabase.table("flight_classes").update({"booked_seats": 0}).eq("flight_id", str(id)).execute()
     
-    admin_id = "system"
+    admin_id = admin_user.get("id") or admin_user.get("email", "system")
     await log_admin_action(
         supabase=supabase,
         admin_id=admin_id,

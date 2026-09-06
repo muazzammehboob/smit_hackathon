@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173", "*"]
     N8N_WEBHOOK_SECRET: str = "hackathon-secret"
     PRICE_LOCK_SECRET: str = "price-lock-secret-key-12345"
+    JWT_SECRET_KEY: str = Field(
+        default="price-lock-secret-key-12345",
+        validation_alias=AliasChoices("JWT_SECRET_KEY", "PRICE_LOCK_SECRET"),
+    )
+    JWT_ALGORITHM: str = "HS256"
+    ENVIRONMENT: str = "development"
     PORT: int = 8000
 
     def model_post_init(self, __context: Any) -> None:

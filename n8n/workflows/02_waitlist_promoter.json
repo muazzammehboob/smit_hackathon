@@ -54,7 +54,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO notification_logs (message) VALUES ('Waitlist promoted')"
+        "query": "INSERT INTO notification_logs (type, recipient, status, details) VALUES ('SYSTEM', 'ops-team', 'SENT', '{\"message\": \"Waitlist promotion completed\"}')"
       },
       "name": "Log Notification",
       "type": "n8n-nodes-base.postgres",

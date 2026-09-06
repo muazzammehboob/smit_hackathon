@@ -80,6 +80,12 @@ async def join_waitlist_service(
             detail="Supabase database client is unavailable",
         )
 
+    if not payload.flight_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="flight_id is required",
+        )
+
     flight_id_str = str(payload.flight_id)
 
     # 1. Verify flight existence
@@ -157,11 +163,29 @@ async def join_waitlist_service(
         fare_or_seat_class=fare_str,
     )
 
+    # Check for duplicate
+    passenger_email = str(payload.passenger_email).strip()
+    existing = (
+        await supabase.table("waitlist")
+        .select("id")
+        .eq("flight_id", flight_id_str)
+        .eq("passenger_email", passenger_email)
+        .eq("status", "WAITING")
+        .maybe_single()
+        .execute()
+    )
+
+    if existing and existing.data:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Passenger is already on the waitlist for this flight",
+        )
+
     # 4. Insert record into waitlist table
     insert_payload = {
         "flight_id": flight_id_str,
         "passenger_name": payload.passenger_name.strip(),
-        "passenger_email": str(payload.passenger_email).strip(),
+        "passenger_email": passenger_email,
         "loyalty_tier": loyalty_str,
         "requested_class": class_str,
         "priority_score": priority_score,

@@ -145,8 +145,9 @@ def test_join_waitlist_success() -> None:
     # 1. Flight lookup: exists
     # 2. Flight class lookup: capacity=50, booked=48
     # 3. Active holds: 2 holds in ECONOMY -> available = 50 - (48 + 2) = 0 (Full!)
-    # 4. Insert waitlist record
-    # 5. Query position: count of higher scores = 2 -> position = 3
+    # 4. Duplicate check: None
+    # 5. Insert waitlist record
+    # 6. Query position: count of higher scores = 2 -> position = 3
     pos_mock = MagicMock()
     pos_mock.count = 2
     pos_mock.data = [{"id": str(uuid4())}, {"id": str(uuid4())}]
@@ -158,6 +159,7 @@ def test_join_waitlist_success() -> None:
             {"flight_seats": {"seat_class": "ECONOMY"}},
             {"flight_seats": {"seat_class": "ECONOMY"}},
         ]),
+        MagicMock(data=None),
         MagicMock(data=[{"id": waitlist_id}]),
         pos_mock,
     ])
@@ -403,6 +405,7 @@ def test_api_route_join_waitlist_201() -> None:
         MagicMock(data={"id": flight_id}),
         MagicMock(data={"capacity": 20, "booked_seats": 20}),
         MagicMock(data=[]),
+        MagicMock(data=None),
         MagicMock(data=[{"id": waitlist_id}]),
         pos_mock,
     ])
@@ -557,3 +560,201 @@ def test_api_route_claim_200() -> None:
     assert body["pnr"] == "CLAIM1"
     assert body["status"] == "CONFIRMED"
     assert body["waitlist_id"] == waitlist_id
+
+
+def test_join_waitlist_duplicate_conflict() -> None:
+    mock_supabase = MagicMock()
+    flight_id = uuid4()
+    existing_waitlist_id = str(uuid4())
+
+    table_chain = MagicMock()
+    table_chain.select.return_value = table_chain
+    table_chain.eq.return_value = table_chain
+    table_chain.gt.return_value = table_chain
+    table_chain.maybe_single.return_value = table_chain
+
+    # 1. Flight exists
+    # 2. Flight class full: capacity=50, booked=50
+    # 3. Active holds: 0
+    # 4. Duplicate check: returns existing entry
+    table_chain.execute = AsyncMock(side_effect=[
+        MagicMock(data={"id": str(flight_id)}),
+        MagicMock(data={"capacity": 50, "booked_seats": 50}),
+        MagicMock(data=[]),
+        MagicMock(data={"id": existing_waitlist_id, "flight_id": str(flight_id)}),
+    ])
+    mock_supabase.table.return_value = table_chain
+
+    payload = WaitlistJoinRequest(
+        flight_id=flight_id,
+        requested_class=SeatClassEnum.ECONOMY,
+        passenger_name="Alice Brown",
+        passenger_email="alice@example.com",
+        loyalty_tier=LoyaltyTierEnum.GOLD,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(join_waitlist_service(supabase=mock_supabase, payload=payload))
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "Passenger is already on the waitlist for this flight"
+
+
+def test_api_contract_join_waitlist_201() -> None:
+    mock_supabase = MagicMock()
+    flight_id = str(uuid4())
+    waitlist_id = str(uuid4())
+
+    table_chain = MagicMock()
+    table_chain.select.return_value = table_chain
+    table_chain.eq.return_value = table_chain
+    table_chain.gt.return_value = table_chain
+    table_chain.maybe_single.return_value = table_chain
+    table_chain.insert.return_value = table_chain
+
+    pos_mock = MagicMock()
+    pos_mock.count = 0
+    pos_mock.data = []
+
+    table_chain.execute = AsyncMock(side_effect=[
+        MagicMock(data={"id": flight_id}),
+        MagicMock(data={"capacity": 30, "booked_seats": 30}),
+        MagicMock(data=[]),
+        MagicMock(data=None),
+        MagicMock(data=[{"id": waitlist_id}]),
+        pos_mock,
+    ])
+    mock_supabase.table.return_value = table_chain
+
+    app.dependency_overrides[get_supabase_client] = lambda: mock_supabase
+    client = TestClient(app)
+
+    # API contract endpoint: POST /api/v1/flights/{flight_id}/waitlist (without flight_id in body)
+    res = client.post(
+        f"/api/v1/flights/{flight_id}/waitlist",
+        json={
+            "requested_class": "ECONOMY",
+            "passenger_name": "Contract User",
+            "passenger_email": "contract@example.com",
+            "loyalty_tier": "SILVER",
+        },
+    )
+    app.dependency_overrides.clear()
+
+    assert res.status_code == 201
+    body = res.json()
+    assert body["waitlist_id"] == waitlist_id
+    assert body["flight_id"] == flight_id
+    assert body["passenger_name"] == "Contract User"
+    assert body["status"] == "WAITING"
+    assert body["position"] == 1
+
+
+def test_api_contract_join_waitlist_duplicate_409() -> None:
+    mock_supabase = MagicMock()
+    flight_id = str(uuid4())
+
+    table_chain = MagicMock()
+    table_chain.select.return_value = table_chain
+    table_chain.eq.return_value = table_chain
+    table_chain.gt.return_value = table_chain
+    table_chain.maybe_single.return_value = table_chain
+
+    table_chain.execute = AsyncMock(side_effect=[
+        MagicMock(data={"id": flight_id}),
+        MagicMock(data={"capacity": 20, "booked_seats": 20}),
+        MagicMock(data=[]),
+        MagicMock(data={"id": str(uuid4())}),
+    ])
+    mock_supabase.table.return_value = table_chain
+
+    app.dependency_overrides[get_supabase_client] = lambda: mock_supabase
+    client = TestClient(app)
+
+    res = client.post(
+        f"/api/v1/flights/{flight_id}/waitlist",
+        json={
+            "requested_class": "FIRST",
+            "passenger_name": "Duplicate User",
+            "passenger_email": "dup@example.com",
+        },
+    )
+    app.dependency_overrides.clear()
+
+    assert res.status_code == 409
+    body = res.json()
+    assert body["detail"] == "Passenger is already on the waitlist for this flight"
+
+
+def test_api_contract_position_200() -> None:
+    mock_supabase = MagicMock()
+    flight_id = str(uuid4())
+    waitlist_id = str(uuid4())
+
+    table_chain = MagicMock()
+    table_chain.select.return_value = table_chain
+    table_chain.eq.return_value = table_chain
+    table_chain.gt.return_value = table_chain
+    table_chain.maybe_single.return_value = table_chain
+
+    pos_mock = MagicMock()
+    pos_mock.count = 2
+    pos_mock.data = [{"id": str(uuid4())}, {"id": str(uuid4())}]
+
+    table_chain.execute = AsyncMock(side_effect=[
+        MagicMock(data={
+            "id": waitlist_id,
+            "flight_id": flight_id,
+            "passenger_name": "Position User",
+            "passenger_email": "pos@example.com",
+            "loyalty_tier": "PLATINUM",
+            "requested_class": "FIRST",
+            "priority_score": 5000000,
+            "status": "WAITING",
+        }),
+        pos_mock,
+    ])
+    mock_supabase.table.return_value = table_chain
+
+    app.dependency_overrides[get_supabase_client] = lambda: mock_supabase
+    client = TestClient(app)
+
+    # API contract endpoint: GET /api/v1/flights/{flight_id}/waitlist/position?email=...
+    res = client.get(f"/api/v1/flights/{flight_id}/waitlist/position?email=pos@example.com")
+    app.dependency_overrides.clear()
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["waitlist_id"] == waitlist_id
+    assert body["position"] == 3
+    assert body["status"] == "WAITING"
+
+
+def test_api_contract_leave_200() -> None:
+    mock_supabase = MagicMock()
+    flight_id = str(uuid4())
+    waitlist_id = str(uuid4())
+
+    table_chain = MagicMock()
+    table_chain.select.return_value = table_chain
+    table_chain.eq.return_value = table_chain
+    table_chain.update.return_value = table_chain
+    table_chain.maybe_single.return_value = table_chain
+    table_chain.execute = AsyncMock(side_effect=[
+        MagicMock(data={"id": waitlist_id, "status": "WAITING"}),
+        MagicMock(data=[{"id": waitlist_id, "status": "CANCELLED"}]),
+    ])
+    mock_supabase.table.return_value = table_chain
+
+    app.dependency_overrides[get_supabase_client] = lambda: mock_supabase
+    client = TestClient(app)
+
+    # API contract endpoint: DELETE /api/v1/flights/{flight_id}/waitlist/{waitlist_id}
+    res = client.delete(f"/api/v1/flights/{flight_id}/waitlist/{waitlist_id}")
+    app.dependency_overrides.clear()
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["waitlist_id"] == waitlist_id
+    assert body["status"] == "CANCELLED"
+    assert "Successfully left" in body["message"]
+

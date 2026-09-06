@@ -37,7 +37,7 @@ def test_generate_price_lock_token_hmac():
     token, expires_at = generate_price_lock_token(flight_id, seat_class, price_cents)
 
     assert isinstance(token, str)
-    assert len(token) == 64
+    assert len(token.split(":")) == 5
     assert isinstance(expires_at, datetime)
 
     now_utc = datetime.now(timezone.utc)
@@ -52,7 +52,7 @@ def test_generate_price_lock_token_hmac():
         hashlib.sha256,
     ).hexdigest()
 
-    assert token == expected_sig
+    assert token == f"{flight_id}:{seat_class}:{price_cents}:{ts}:{expected_sig}"
 
 
 def test_verify_price_lock_token_tamper_detection():
@@ -130,7 +130,7 @@ async def test_search_existing_flight_and_inventory(client):
     assert flight["flight_number"] == "BA101"
     assert flight["origin"] == "LHR"
     assert flight["destination"] == "DXB"
-    assert len(flight["price_lock_token"]) == 64
+    assert len(flight["price_lock_token"].split(":")) == 5
     assert flight["price_lock_expires_at"] is not None
 
     avail_classes = {item["seat_class"]: item for item in flight["availability"]}

@@ -1,9 +1,9 @@
 """Response schemas and standardized output models for the Flight Management System API."""
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Union
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class BaseResponse(BaseModel):
@@ -85,6 +85,41 @@ class CancellationResponse(BaseModel):
     refund_type: str
     status: str
     seat_released: bool
+
+
+class PartialCancellationResponse(BaseModel):
+    """Partial booking cancellation resolution for specified passengers."""
+
+    status: str
+    child_pnr: Optional[str] = None
+    original_pnr: Optional[str] = None
+    cancelled_passengers: list[Any] = Field(default_factory=list)
+    refund_amount_cents: int = Field(default=0, ge=0)
+    refund_type: Optional[str] = None
+    remaining_passengers: Optional[int] = None
+
+
+class TravelCreditResponse(BaseModel):
+    """Travel credit voucher issuance response."""
+
+    status: str
+    voucher_code: Optional[str] = None
+    credit_code: Optional[str] = None
+    amount_cents: int = Field(default=0, ge=0)
+    balance_cents: int = Field(default=0, ge=0)
+    expires_at: Union[str, datetime]
+    pnr: Optional[str] = None
+    booking_id: Optional[Union[str, UUID]] = None
+    passenger_email: Optional[str] = None
+
+    @model_validator(mode="after")
+    def sync_credit_fields(self) -> "TravelCreditResponse":
+        """Ensure voucher_code and credit_code are synchronized."""
+        if self.voucher_code and not self.credit_code:
+            self.credit_code = self.voucher_code
+        elif self.credit_code and not self.voucher_code:
+            self.voucher_code = self.credit_code
+        return self
 
 
 class WaitlistResponse(BaseModel):

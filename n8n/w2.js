@@ -46,7 +46,7 @@ const notifyNode = node({
     name: 'Log Notification',
     parameters: {
       operation: 'executeQuery',
-      query: "INSERT INTO notification_logs (message) VALUES ('Waitlist promoted')"
+      query: "INSERT INTO notification_logs (type, recipient, status, details) VALUES ('SYSTEM', 'ops-team', 'SENT', '{\"message\": \"Waitlist promotion completed\"}')"
     }
   }
 });

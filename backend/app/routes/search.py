@@ -117,7 +117,8 @@ def generate_price_lock_token(
         hashlib.sha256,
     ).hexdigest()
 
-    return signature, exp_dt
+    token = f"{fid}:{s_class}:{cents}:{ts}:{signature}"
+    return token, exp_dt
 
 
 def verify_price_lock_token(
@@ -150,6 +151,16 @@ def verify_price_lock_token(
     s_class = str(seat_class).upper()
     cents = int(price_cents)
 
+    sig = token
+    if ":" in token:
+        parts = token.split(":")
+        if len(parts) == 5:
+            t_fid, t_sc, t_cents, t_ts, sig = parts
+            if t_fid != fid or t_sc != s_class or str(cents) != t_cents:
+                return False
+        else:
+            sig = parts[-1]
+
     # Validate against expiration timestamp as well as issue timestamp (15 min window)
     for candidate_ts in (ts, ts - 900):
         expected_msg = f"{fid}:{s_class}:{cents}:{candidate_ts}"
@@ -158,7 +169,7 @@ def verify_price_lock_token(
             expected_msg.encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
-        if hmac.compare_digest(token, expected_sig):
+        if hmac.compare_digest(sig, expected_sig) or hmac.compare_digest(token, expected_sig):
             return True
 
     return False

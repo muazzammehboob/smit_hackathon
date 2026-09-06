@@ -1,8 +1,9 @@
 """Incoming webhook receivers for n8n orchestrations and external integrations."""
 
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from app.dependencies import get_supabase_client
 from app.services.embeddings import generate_embedding, match_policy_chunks
 from supabase import AsyncClient
@@ -24,12 +25,41 @@ async def trigger_hold_sweep(supabase: AsyncClient = Depends(get_supabase_client
 @router.post("/webhooks/trigger-waitlist-promotion")
 async def trigger_waitlist_promotion(supabase: AsyncClient = Depends(get_supabase_client)):
     """Manually executes promotion for demo."""
-    return {"status": "success", "message": "Waitlist promotion triggered."}
+    # Get flights with WAITING waitlist entries
+    waitlist_res = await supabase.table("waitlist").select("flight_id").eq("status", "WAITING").execute()
+    flight_ids = list(set(w["flight_id"] for w in (waitlist_res.data or [])))
+    promoted = []
+    for fid in flight_ids:
+        try:
+            res = await supabase.rpc("promote_waitlist", {"p_flight_id": fid}).execute()
+            if res.data:
+                promoted.append(res.data)
+        except Exception:
+            pass
+    return {"status": "success", "promoted_count": len(promoted), "results": promoted}
 
 @router.post("/webhooks/trigger-fraud-scan")
 async def trigger_fraud_scan(supabase: AsyncClient = Depends(get_supabase_client)):
     """Manually executes fraud scan for demo."""
-    return {"status": "success", "message": "Fraud scan executed."}
+    # Find bookings from last 10 minutes  
+    ten_min_ago = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    bookings_res = await supabase.table("bookings").select("id, ip_address").gte("created_at", ten_min_ago).eq("status", "CONFIRMED").execute()
+
+    # Count by IP
+    ip_counts = {}
+    for b in (bookings_res.data or []):
+        ip = b.get("ip_address")
+        if ip:
+            ip_counts[ip] = ip_counts.get(ip, 0) + 1
+
+    # Flag IPs with 5+ bookings
+    flagged_ips = [ip for ip, count in ip_counts.items() if count >= 5]
+    flagged_count = 0
+    for ip in flagged_ips:
+        await supabase.table("bookings").update({"status": "SUSPECTED_FRAUD"}).eq("ip_address", ip).gte("created_at", ten_min_ago).execute()
+        flagged_count += ip_counts[ip]
+
+    return {"status": "success", "flagged_ips": flagged_ips, "flagged_bookings": flagged_count}
 
 class SupportInquiry(BaseModel):
     pnr: str
@@ -128,5 +158,19 @@ async def support_approve(req: ApprovalRequest, supabase: AsyncClient = Depends(
     
     if not res.data:
         raise HTTPException(status_code=404, detail="Draft not found")
-        
+
+    if req.action == "approve":
+        # Send approved response to customer
+        try:
+            from app.utils.email import send_approved_rag_response
+            draft = res.data[0] if isinstance(res.data, list) and res.data else (res.data if isinstance(res.data, dict) else {})
+            await send_approved_rag_response(
+                customer_email=draft.get("customer_email", ""),
+                pnr=draft.get("pnr", ""),
+                response_text=draft.get("draft_response", ""),
+                supabase=supabase,
+            )
+        except Exception as e:
+            pass  # Don't fail the approval if email fails
+
     return {"status": "success", "draft_status": status_val}

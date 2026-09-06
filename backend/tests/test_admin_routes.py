@@ -317,3 +317,71 @@ def test_admin_capacity_payload_validation() -> None:
 
     with pytest.raises(ValueError):
         CapacityAdjustPayload(seat_class="FIRST", new_capacity=-1)
+
+    with pytest.raises(ValueError):
+        CapacityAdjustPayload(seat_class="FIRST", new_capacity=0)
+
+
+def test_require_role_jwt_and_header_behavior() -> None:
+    """Validate require_role JWT validation, header fallback in dev, and forgery protection."""
+    from starlette.requests import Request
+    from app.config import settings
+    from app.middleware.rbac import require_role
+    from app.routes.auth import create_jwt_token
+
+    admin_token = create_jwt_token({"sub": "admin-123", "email": "adm@aloft.com", "role": "SUPER_ADMIN"})
+    passenger_token = create_jwt_token({"sub": "user-456", "email": "user@aloft.com", "role": "PASSENGER"})
+
+    async def run() -> None:
+        checker = require_role(["SUPER_ADMIN"])
+
+        # 1. Valid JWT with matching role succeeds
+        req_admin = Request({
+            "type": "http",
+            "headers": [(b"authorization", f"Bearer {admin_token}".encode("utf-8"))],
+        })
+        user = await checker(req_admin)
+        assert user["id"] == "admin-123"
+        assert user["role"] == "SUPER_ADMIN"
+        assert user["email"] == "adm@aloft.com"
+
+        # 2. Valid JWT with non-matching role raises 403
+        req_passenger = Request({
+            "type": "http",
+            "headers": [(b"authorization", f"Bearer {passenger_token}".encode("utf-8"))],
+        })
+        with pytest.raises(HTTPException) as exc_p:
+            await checker(req_passenger)
+        assert exc_p.value.status_code == 403
+
+        # 3. Forgery attempt: Passenger JWT + X-Admin-Role header must still raise 403
+        req_forged = Request({
+            "type": "http",
+            "headers": [
+                (b"authorization", f"Bearer {passenger_token}".encode("utf-8")),
+                (b"x-admin-role", b"SUPER_ADMIN"),
+            ],
+        })
+        with pytest.raises(HTTPException) as exc_f:
+            await checker(req_forged)
+        assert exc_f.value.status_code == 403
+
+        # 4. Dev/test mode fallback to X-Admin-Role when no token provided
+        req_dev_header = Request({
+            "type": "http",
+            "headers": [(b"x-admin-role", b"SUPER_ADMIN")],
+        })
+        dev_user = await checker(req_dev_header)
+        assert dev_user["role"] == "SUPER_ADMIN"
+
+        # 5. Production mode rejects X-Admin-Role header fallback
+        orig_env = settings.ENVIRONMENT
+        try:
+            settings.ENVIRONMENT = "production"
+            with pytest.raises(HTTPException) as exc_prod:
+                await checker(req_dev_header)
+            assert exc_prod.value.status_code == 403
+        finally:
+            settings.ENVIRONMENT = orig_env
+
+    asyncio.run(run())

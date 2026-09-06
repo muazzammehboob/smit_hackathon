@@ -7,7 +7,13 @@ logger = logging.getLogger("app.routes.bookings")
 
 from app.dependencies import get_supabase_client, verify_idempotency_key
 from app.models.requests import BookingConfirmRequest, SeatHoldRequest, CancellationRequest
-from app.models.responses import BookingResponse, HoldResponse, CancellationResponse
+from app.models.responses import (
+    BookingResponse,
+    CancellationResponse,
+    HoldResponse,
+    PartialCancellationResponse,
+    TravelCreditResponse,
+)
 from app.services.bookings import (
     confirm_booking_service,
     get_booking_by_pnr,
@@ -152,6 +158,7 @@ async def get_booking(
 async def cancel_booking(
     pnr: str,
     supabase: AsyncClient = Depends(get_supabase_client),
+    idempotency_key: str = Depends(verify_idempotency_key),
 ) -> CancellationResponse:
     from app.services.bookings import cancel_booking_service
     res = await cancel_booking_service(supabase=supabase, pnr=pnr)
@@ -160,6 +167,7 @@ async def cancel_booking(
 
 @router.post(
     "/{pnr}/cancel-passenger",
+    response_model=PartialCancellationResponse,
     status_code=status.HTTP_200_OK,
     summary="Partially cancel a group booking for specified passengers",
 )
@@ -167,6 +175,7 @@ async def cancel_passenger_partial(
     pnr: str,
     payload: CancellationRequest,
     supabase: AsyncClient = Depends(get_supabase_client),
+    idempotency_key: str = Depends(verify_idempotency_key),
 ) -> dict[str, Any]:
     from app.services.bookings import cancel_passenger_partial_service
     if not payload.passenger_ids:
@@ -181,12 +190,14 @@ async def cancel_passenger_partial(
 
 @router.post(
     "/{pnr}/travel-credit",
+    response_model=TravelCreditResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Cancel a booking and issue a travel credit voucher",
 )
 async def issue_travel_credit(
     pnr: str,
     supabase: AsyncClient = Depends(get_supabase_client),
+    idempotency_key: str = Depends(verify_idempotency_key),
 ) -> dict[str, Any]:
     from app.services.bookings import issue_travel_credit_service
     return await issue_travel_credit_service(supabase=supabase, pnr=pnr)

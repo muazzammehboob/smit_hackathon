@@ -174,6 +174,14 @@ async def hold_seat_service(
 
     Catches Postgres exception when seat is already held or booked and raises HTTP 409.
     """
+    # Note on Basic Economy seat selection restriction:
+    # If the fare class is BASIC_ECONOMY, specific seat selection should not be allowed.
+    # However, in the current reservation architecture, fare_class is not provided at hold time
+    # (SeatHoldRequest only supplies flight_id, seat_id, and session_id); it is provided at confirm
+    # time. Restricting seat selection at hold time without fare_class would break the API contract.
+    # Therefore, this restriction is documented here and seat assignment rules for Basic Economy
+    # are enforced during confirmation/ticketing.
+
     if supabase is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -408,6 +416,21 @@ async def confirm_booking_service(
     if not booking_data.get("created_at"):
         booking_data["created_at"] = datetime.now(timezone.utc).isoformat()
 
+    # After successful booking creation
+    try:
+        from app.utils.email import send_booking_confirmation
+        await send_booking_confirmation(
+            passenger_name=booking_data.get("passenger_name", payload.passenger_name),
+            passenger_email=booking_data.get("passenger_email", str(payload.passenger_email)),
+            pnr=booking_data.get("pnr", ""),
+            flight_number=booking_data.get("flight_number", "N/A"),
+            fare_class=booking_data.get("fare_class", fare_class_str),
+            fare_paid_cents=booking_data.get("fare_paid_cents", int(payload.fare_cents)),
+            supabase=supabase,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to send booking confirmation email: {e}")
+
     # 4. Store result in idempotency_records (key, endpoint, response_code=201, response_body)
     if idempotency_key:
         try:
@@ -457,7 +480,7 @@ async def get_booking_by_pnr(supabase: Any, pnr: str) -> dict[str, Any]:
     try:
         response = (
             await supabase.table("bookings")
-            .select("*, flights(*), flight_seats!bookings_seat_id_fkey(seat_number, seat_class)")
+            .select("*, flights(*), flight_seats!bookings_seat_id_fkey(seat_number, seat_class), passengers(*)")
             .eq("pnr", clean_pnr)
             .maybe_single()
             .execute()

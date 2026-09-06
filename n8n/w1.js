@@ -46,7 +46,7 @@ const logNode = node({
     name: 'Log to notification_logs',
     parameters: {
       operation: 'executeQuery',
-      query: "INSERT INTO notification_logs (message) VALUES ('Swept holds')"
+      query: "INSERT INTO notification_logs (type, recipient, status, details) VALUES ('SYSTEM', 'ops-team', 'SENT', '{\"message\": \"Hold sweep completed\"}')"
     }
   }
 });

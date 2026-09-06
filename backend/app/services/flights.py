@@ -256,10 +256,10 @@ async def adjust_capacity_service(
             detail=f"Invalid seat class '{seat_class}'. Must be one of FIRST, BUSINESS, ECONOMY",
         )
 
-    if new_capacity < 0:
+    if new_capacity <= 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Capacity cannot be negative",
+            detail="Capacity must be strictly greater than zero",
         )
 
     # 1. Fetch existing flight_classes record
