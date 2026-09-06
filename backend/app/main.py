@@ -114,6 +114,19 @@ async def unhandled_exception_handler(
     )
 
 
+@app.get("/")
+async def root():
+    """Root endpoint returning service metadata."""
+    return {
+        "status": "online",
+        "online": True,
+        "service": "flight management",
+        "version": app.version,
+        "docs": "/docs",
+        "health": "ok"
+    }
+
+
 # Health router included at root for load balancers and orchestrators
 app.include_router(health_router)
 
